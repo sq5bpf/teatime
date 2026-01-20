@@ -120,11 +120,11 @@ There are many TEAx encryption algorithms, with varying strength.
 
 TEA1 - for everyone, 
 TEA2 - for goverment in Schengen area, 
-TEA3 - for everyone (this is an upgrade to TEA1),
-TEA4 - for goverments outside the Schengen area
+TEA3 - for goverments outside the Schengen area
+TEA4 - for everyone (this is an upgrade to TEA1),
 
 
-TEA1 is the weakest of them all, and ETSI has suggested that TEA3 is a replacement.
+TEA1 is the weakest of them all, and ETSI has suggested that TEA4 is a replacement.
 
 These algorithms have not been documented, however they were reverse engineered by the
 MidnightBlue team, and published in 2023: https://www.midnightblue.nl/research/tetraburst
@@ -148,7 +148,7 @@ by the services which influenced development of these algorithms.
 
 ### Is this still relevant?
 
-No, in 2026 it shouldn't be. The TEA1 algorithm has been known to be the weakest, with ETSI providing an alternative (TEA3).
+No, in 2026 it shouldn't be. The TEA1 algorithm has been known to be the weakest, with ETSI providing an alternative (TEA4).
 
 After the MidnightBlue publications we now know the deails (the key shortening function).
 
@@ -161,7 +161,7 @@ In short: anyone still using TEA1 is either an idiot, or has done a very extensi
 ### What about goverment services?
 
 Goverment entities should be using the encryption algorithms which have been 
-specifically developed for them. TEA2 in the Schengen area or TEA4 outside of the Schengen area.
+specifically developed for them. TEA2 in the Schengen area or TEA3 outside of the Schengen area.
 
 So their traffic was secure before the publications in 2023 and still is.
 
