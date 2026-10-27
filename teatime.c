@@ -84,6 +84,12 @@ const uint8_t g_abTea1Sbox[256] = {
 	0x7C, 0xE9, 0x8C, 0xFE, 0xDC, 0x0F, 0x2D, 0x3C, 0x2E, 0xF6, 0x15, 0x2F, 0xAF, 0xE1, 0xEB, 0x3F,
 	0x99, 0x43, 0x13, 0x0B, 0xE0, 0xA5, 0x12, 0x77, 0x5D, 0xB3, 0x38, 0xD9, 0xEF, 0x5A, 0x01, 0x70};
 
+/* speedup: lookup tables replacing tea1_state_word_to_newbyte /
+ * tea1_reorder_state_byte in the hot path (filled by tea1_build_tables) */
+uint8_t tea1_lutA[65536];
+uint8_t tea1_lutB[65536];
+uint8_t tea1_reord[256];
+
 uint64_t tea1_expand_iv(uint32_t dwShortIv)
 {
 	uint32_t dwXorred = dwShortIv ^ 0x96724FA1;
@@ -125,6 +131,18 @@ uint8_t tea1_reorder_state_byte(uint8_t bStByte)
 	bOut |= ((bStByte >> 5) & 0x02);
 	bOut |= ((bStByte << 4) & 0x80);
 	return bOut;
+}
+
+/* speedup: precompute the two state functions into lookup tables.
+ * Call once at startup before cracking. */
+void tea1_build_tables(void)
+{
+	for (uint32_t w = 0; w < 65536; w++) {
+		tea1_lutA[w] = tea1_state_word_to_newbyte(w, g_awTea1LutA);
+		tea1_lutB[w] = tea1_state_word_to_newbyte(w, g_awTea1LutB);
+	}
+	for (uint32_t b = 0; b < 256; b++)
+		tea1_reord[b] = tea1_reorder_state_byte(b);
 }
 
 int32_t tea1_init_key_register(const uint8_t *lpKey)
@@ -204,9 +222,10 @@ uint32_t tea_build_iv(struct tetra_tdma_time *tm, uint16_t hn, uint8_t dir)
 /************ begining of teatime stuff ************/
 #define VERSION "0.1"
 
-int completed=0;
+volatile int completed=0;
 uint64_t eiv1,eiv2;
 uint32_t xorct;
+uint8_t xorctb[4];	/* xorct as bytes, for per-byte early-out */
 int num_threads=0;
 
 struct arg_struct { 
@@ -215,9 +234,41 @@ struct arg_struct {
 	int thread;
 };
 
+/* speedup: test one short key against both frames.
+ * The key register (sbox chain) evolves identically for both IVs, so it is
+ * computed once and used to drive both IV registers in lockstep. The state
+ * functions are table lookups, and we reject on the first keystream byte that
+ * differs instead of always generating all 4 bytes. Equivalent to the original
+ * (kss1^kss2)==xorct test. Returns non-zero on a match. */
+static inline uint32_t fast_match(uint32_t short_key)
+{
+	uint64_t iv1 = eiv1, iv2 = eiv2;
+	uint32_t keyreg = short_key;
+	uint32_t skip = 54;
+
+	for (int i = 0; i < 4; i++) {
+		for (uint32_t j = 0; j < skip; j++) {
+			uint8_t s = g_abTea1Sbox[((keyreg >> 24) ^ keyreg) & 0xff];
+			keyreg = (keyreg << 8) | s;
+
+			uint8_t n1 = tea1_lutB[(iv1 >> 40) & 0xffff] ^ (iv1 >> 56)
+				   ^ tea1_reord[(iv1 >> 32) & 0xff] ^ s;
+			iv1 = ((iv1 << 8) ^ ((uint64_t)tea1_lutA[(iv1 >> 8) & 0xffff] << 32)) | n1;
+
+			uint8_t n2 = tea1_lutB[(iv2 >> 40) & 0xffff] ^ (iv2 >> 56)
+				   ^ tea1_reord[(iv2 >> 32) & 0xff] ^ s;
+			iv2 = ((iv2 << 8) ^ ((uint64_t)tea1_lutA[(iv2 >> 8) & 0xffff] << 32)) | n2;
+		}
+		if ((uint8_t)((iv1 >> 56) ^ (iv2 >> 56)) != xorctb[i])
+			return 0;	/* this keystream byte already differs */
+		skip = 19;
+	}
+	return 1;
+}
+
 void *bruteforce(void *arg) {
 
-	uint32_t short_key,xorks,kss1,kss2;
+	uint32_t short_key;
 	struct arg_struct *args = (struct arg_struct *)arg;
 	uint32_t tid=args->thread;
 	uint32_t tstart=args->start;
@@ -233,12 +284,7 @@ void *bruteforce(void *arg) {
 	printf("[%2i] Starting thread  , %8.8x - %8.8x\n",tid,tstart,tstop);
 	short_key=args->start;
 	while(1) {
-		tea1_inner(eiv1, short_key, 4, &kss1);
-		tea1_inner(eiv2, short_key, 4, &kss2);
-		xorks=kss1^kss2;
-
-
-		if ((short_key&0x0000ffff)==0) { 
+		if ((short_key&0x0000ffff)==0) {
 			if (completed) break;
 			if ((short_key&0x000fffff)==0) { 
 				time_diff=time(0)-time_start;
@@ -250,7 +296,7 @@ void *bruteforce(void *arg) {
 				printf("[%2i] %8.8x-%8.8x doing key %8.8x  speed:%li keys/s  done:%i%%  eta:%li s\n",tid,tstart,tstop,short_key,speed*num_threads,(int)perc,eta);
 			}
 		}
-		if (xorct==xorks) {
+		if (fast_match(short_key)) {
 			printf("\n!!!!!!!!!!!!!!!!   found key: %8.8x   !!!!!!!!!!!!!!!!\n\n",short_key);
 			completed=1;
 			break;
@@ -336,6 +382,8 @@ int main(int argc,char **argv) {
 		//printf("iv1: %8.8x iv2: %8.8x\n",iv1,iv2);
 
 		xorct=htonl(ct1^ct2);
+		memcpy(xorctb,&xorct,4);	/* byte view for early-out */
+		tea1_build_tables();		/* fill lookup tables once */
 
 		pthread_t some_thread;
 		struct arg_struct args;
@@ -376,7 +424,7 @@ int main(int argc,char **argv) {
 	else if (mode==MODE_VERIFY) {
 		uint32_t short_key=strtol(argv[8], NULL, 16);
 		uint32_t kss1,kss2;
-		tea1_inner(eiv1, short_key, 4, &kss1);
+		tea1_inner(eiv1, short_key, 4, (uint8_t *)&kss1);
 		kss2=ntohl(kss1);
 		printf("\nkey:%8.8x keystream:%8.8x ciphertext^keystream:%8.8x\n",short_key,kss2,ct1^kss2);
 
