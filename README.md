@@ -1,8 +1,14 @@
-# TEAtime v0.1 TEA1 short key recovery 
+# TEAtime v0.2 TEA1 short key recovery 
 
 Jacek Lipkowski <sq5bpf@lipkowski.org>
 
-This is a very simple/naiive TEA1 short key recovery implementation.
+
+## Notes from version 0.1
+
+*I am retaining the description from version 0.1, because it's much easier to understand (and as a reference implementation). See below for a description how this was further optimised*
+
+
+This is a very simple/naive TEA1 short key recovery implementation.
 
 Assume that the first 32 bits for some type2 frame are the same if 
 they belong to the same address.
@@ -18,7 +24,7 @@ pre-calculate x=(first 32 bits of frame1) xor (first 32 bits of frame2)
 
 find a short key for which (keystream1 xor keystream2) == x
 
-Note: this is very naiive, and could be sped up by orders of
+Note: this is very naive, and could be sped up by orders of
 magnitude. Whole keyspace search takes about 2h on an old laptop cpu
 (Intel(R) Core(TM) i5-10210U CPU @ 1.60GHz, stepping 12). The MidnightBlue
 team's demo on a vintage 2000's laptop with only a single core took 8h, so clearly 
@@ -118,6 +124,35 @@ Test this key for a few more frames:
 
 If the key is correct, then keystream xor ciphertext should be the same.
 
+## Notes for version 0.2
+
+My simple/naive implmentation has been optimised by 
+[Wojtek SP5WWP](https://github.com/sp5wwp) of the M17 Project. So it's not as simple anymore.
+
+Summary of the changes:
+
+- Some of the tea1 functions uses precomputed lookup tables now
+- The computation is done in parallel for both keystreams
+- Comparison is done when a byte of data is ready (so it can end early in case of a mismatch)
+- Some other "minor" optimisations (compiler flags etc)
+
+It runs about 27x faster now. Thanks Wojtek!
+
+A test vector that takes longer to calculate to test the speed of various versions:
+
+````
+time ./teatime c 14570 1 1 1 0 12345678 14570 2 2 2 0 87654321
+
+!!!!!!!!!!!!!!!!   found key: d34d7e6d   !!!!!!!!!!!!!!!!
+
+completed!
+
+real    3m22.963s
+user    24m50.675s
+sys     0m1.326s
+
+````
+
 
 ## FAQ
 
@@ -144,7 +179,7 @@ Since the weaknessed have been disclosed three more algorithms have been release
 
 ### What is the problem with TEA1?
 
-From the excellent Midnight Blue research we know the TEA1 encryption uses a 32-bit key,
+From the excellent Midnight Blue research we know the TEA1 encryption internally uses a 32-bit key,
 which is derived from the (known) network parameters and the 80-bit key.
 
 This 32-bit key can be bruteforced (for example using this software).
@@ -162,7 +197,7 @@ After the MidnightBlue publications we now know the deails (the key shortening f
 Since this was published in 2023, all entities had adequate time to migrate.
 
 In short: anyone still using TEA1 is either an idiot, or has done a very extensive risk analysis
-(and for some reason it has shown tat the risk canbe accepted).
+(and for some reason it has shown that the risk can be accepted).
 
 
 ### What about goverment services?
@@ -174,10 +209,13 @@ So their traffic was secure before the publications in 2023 and still is.
 
 Also these goverment entities should have included Kerckhoffs's principle in their risk analysis.
 These are proprietary algorithms, so they were not subject to peer review and thus may
-contain vulnerabilities either because of error (and no peer review) or delibrerate
-weakening (which can't be discovered by peer review). 
+contain vulnerabilities either because of error (and no peer review, which could discover it) or delibrerate
+weakening (and no peer review, which could discover it). 
 
-And in this case this has prooven to be true (and in other cases like for example GSM A5/1).
+And in the case of TEA1 this has proven to be true (and in many other cases like for example GSM A5/1). The algorithm was deliberately weakened.
+
+Since the TEA algorithms are public snce 2023, the govermemt services
+can conduct their own independant security analysis of whatever they are using (and should have!).
 
 
 ### How do i use this key?
